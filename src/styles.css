@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    min-height: 100%;
+    background:
+      radial-gradient(circle at top left, rgba(8, 145, 178, 0.16), transparent 30%),
+      radial-gradient(circle at top right, rgba(52, 211, 153, 0.12), transparent 24%),
+      linear-gradient(180deg, #040816 0%, #050b17 100%);
+  }
+
+  body {
+    @apply min-h-screen bg-transparent text-slate-100 antialiased;
+    margin: 0;
+    min-width: 320px;
+    font-family: "Soehne", "Avenir Next", "IBM Plex Sans", "Segoe UI", sans-serif;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  ::selection {
+    background: rgba(125, 211, 252, 0.22);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.36) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background: rgba(148, 163, 184, 0.28);
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  .panel-surface {
+    @apply rounded-[28px] border border-white/10 bg-white/[0.04] shadow-panel backdrop-blur-2xl;
+  }
+
+  .panel-surface-muted {
+    @apply rounded-[24px] border border-white/10 bg-white/[0.03] backdrop-blur-xl;
+  }
+
+  .signal-pill {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-[0.68rem] font-medium uppercase tracking-[0.24em] text-slate-300;
+  }
+
+  .field-shell {
+    @apply rounded-[24px] border border-white/10 bg-white/[0.04] shadow-glow backdrop-blur-xl;
+  }
+
+  .grid-noise {
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(circle at center, black 32%, transparent 88%);
+  }
+}
