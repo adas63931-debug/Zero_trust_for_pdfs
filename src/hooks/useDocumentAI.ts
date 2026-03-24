@@ -113,6 +113,19 @@ interface WorkerRequestHandlers<TComplete> {
   reject: (reason?: unknown) => void;
 }
 
+interface PIIDefense {
+  regex: RegExp;
+  tag: string;
+  captureGroup?: number;
+}
+
+interface PrefilteredInputRedaction {
+  redactedText: string;
+  dictionary: RedactionResult['dictionary'];
+  tokenDictionary: Record<string, string>;
+  appliedCount: number;
+}
+
 const DEFAULT_WORKER_STATE: DocumentAIWorkerState = {
   stage: 'idle',
   message: 'Not initialized.'
@@ -121,6 +134,37 @@ const DEFAULT_WORKER_STATE: DocumentAIWorkerState = {
 export const DEFAULT_SEMANTIC_THRESHOLD = 0.25;
 const META_QUERY_PATTERN =
   /\b(summarize|summary|this pdf|the pdf|this document|the document)\b/i;
+const PII_DEFENSES: PIIDefense[] = [
+  {
+    regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
+    tag: '[INPUT_EMAIL]'
+  },
+  {
+    regex: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
+    tag: '[INPUT_PHONE]'
+  },
+  {
+    regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g,
+    tag: '[INPUT_CC]'
+  },
+  {
+    regex: /\b\d{3}-\d{2}-\d{4}\b/g,
+    tag: '[INPUT_SSN]'
+  },
+  {
+    regex:
+      /(?:my name is|i am|this is|manager|boss|colleague|director|mr\.|mrs\.|ms\.|dr\.)(?:,)?\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/gi,
+    tag: '[INPUT_PERSON]',
+    captureGroup: 1
+  },
+  {
+    regex:
+      /(?:lives in|from|located in|traveling to|based in)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b/gi,
+    tag: '[INPUT_LOCATION]',
+    captureGroup: 1
+  }
+];
+const TOKEN_FRAGMENT_PATTERN = /\[[A-Z0-9_]+\]/;
 
 export function useDocumentAI({
   semanticThreshold = DEFAULT_SEMANTIC_THRESHOLD
@@ -370,12 +414,11 @@ export function useDocumentAI({
     setPhase('querying');
 
     try {
-      const [inputRedaction] = await redactTexts([trimmedQuery]);
       const {
         sanitizedInput,
         sanitizedInputDictionary,
         tokenDictionary: inputTokenDictionary
-      } = promoteInputRedaction(inputRedaction);
+      } = await sanitizeInputWithDefenses(trimmedQuery);
       const nextPhantomHistory = [
         ...phantomHistory,
         {
@@ -605,7 +648,73 @@ export function useDocumentAI({
     tokenCountersRef.current = {};
   };
 
-  const promoteInputRedaction = (inputRedaction: RedactionResult) => {
+  const sanitizeInputWithDefenses = async (rawInput: string) => {
+    const prefilteredInput = applyPIIDefenses(rawInput);
+
+    if (!shouldRunNERForInput(prefilteredInput.redactedText)) {
+      return {
+        sanitizedInput: prefilteredInput.redactedText,
+        sanitizedInputDictionary: prefilteredInput.dictionary,
+        tokenDictionary: prefilteredInput.tokenDictionary
+      };
+    }
+
+    const [inputRedaction] = await redactTexts([prefilteredInput.redactedText]);
+
+    return promoteInputRedaction(inputRedaction, prefilteredInput);
+  };
+
+  const applyPIIDefenses = (rawInput: string): PrefilteredInputRedaction => {
+    let redactedText = rawInput;
+    const dictionary: RedactionResult['dictionary'] = {};
+    const tokenDictionary: Record<string, string> = {};
+    let appliedCount = 0;
+
+    for (const defense of PII_DEFENSES) {
+      defense.regex.lastIndex = 0;
+
+      redactedText = redactedText.replace(defense.regex, (...args) => {
+        const fullMatch = args[0];
+        const capturedValue =
+          typeof defense.captureGroup === 'number'
+            ? String(args[defense.captureGroup] ?? '')
+            : fullMatch;
+        const originalValue = capturedValue.trim();
+
+        if (!originalValue || TOKEN_FRAGMENT_PATTERN.test(originalValue)) {
+          return fullMatch;
+        }
+
+        const sessionToken = getOrCreateSessionToken(defense.tag, originalValue);
+        const normalizedTag = normalizeTokenLabel(defense.tag);
+
+        dictionary[sessionToken] = {
+          label: normalizedTag,
+          original: originalValue
+        };
+        tokenDictionary[sessionToken] = originalValue;
+        appliedCount += 1;
+
+        if (typeof defense.captureGroup === 'number') {
+          return fullMatch.replace(originalValue, sessionToken);
+        }
+
+        return sessionToken;
+      });
+    }
+
+    return {
+      redactedText,
+      dictionary,
+      tokenDictionary,
+      appliedCount
+    };
+  };
+
+  const promoteInputRedaction = (
+    inputRedaction: RedactionResult,
+    prefilteredInput?: PrefilteredInputRedaction
+  ) => {
     const {
       redactedText: sanitizedInput,
       dictionary: sanitizedInputDictionary,
@@ -618,8 +727,14 @@ export function useDocumentAI({
 
     return {
       sanitizedInput,
-      sanitizedInputDictionary,
-      tokenDictionary
+      sanitizedInputDictionary: {
+        ...(prefilteredInput?.dictionary ?? {}),
+        ...sanitizedInputDictionary
+      },
+      tokenDictionary: {
+        ...(prefilteredInput?.tokenDictionary ?? {}),
+        ...tokenDictionary
+      }
     };
   };
 
@@ -767,6 +882,12 @@ function normalizeTokenLabel(label: string): string {
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '') || 'ENTITY';
+}
+
+function shouldRunNERForInput(text: string): boolean {
+  const remainder = text.replace(/\[[A-Z0-9_]+\]/g, ' ').trim();
+
+  return /[A-Za-z]{2,}/.test(remainder);
 }
 
 function sanitizeStreamingDisplay(text: string): string {
