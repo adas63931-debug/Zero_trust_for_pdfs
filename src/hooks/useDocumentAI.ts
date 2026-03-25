@@ -131,7 +131,7 @@ const DEFAULT_WORKER_STATE: DocumentAIWorkerState = {
   message: 'Not initialized.'
 };
 
-export const DEFAULT_SEMANTIC_THRESHOLD = 0.25;
+export const DEFAULT_SEMANTIC_THRESHOLD = 0.12;
 const META_QUERY_PATTERN =
   /\b(summarize|summary|this pdf|the pdf|this document|the document)\b/i;
 const PII_DEFENSES: PIIDefense[] = [
@@ -165,6 +165,11 @@ const PII_DEFENSES: PIIDefense[] = [
   }
 ];
 const TOKEN_FRAGMENT_PATTERN = /\[[A-Z0-9_]+\]/;
+const EMBEDDING_BATCH_SIZE = 20;
+const LARGE_DOCUMENT_CHUNK_THRESHOLD = 100;
+const SMALL_DOCUMENT_TOP_K = 5;
+const LARGE_DOCUMENT_TOP_K = 15;
+const META_INTENT_TOP_K = 15;
 
 export function useDocumentAI({
   semanticThreshold = DEFAULT_SEMANTIC_THRESHOLD
@@ -430,17 +435,23 @@ export function useDocumentAI({
       setPhantomHistory(nextPhantomHistory);
 
       setQueryStatusMessage('Searching document...');
+      const totalChunks = vectorStoreRef.current.size();
+      const metaIntentOverride =
+        totalChunks > 0 && META_QUERY_PATTERN.test(sanitizedInput);
+      const retrievalTopK =
+        metaIntentOverride
+          ? META_INTENT_TOP_K
+          : totalChunks > LARGE_DOCUMENT_CHUNK_THRESHOLD
+          ? LARGE_DOCUMENT_TOP_K
+          : SMALL_DOCUMENT_TOP_K;
       const semanticMatches =
-        vectorStoreRef.current.size() > 0
+        totalChunks > 0
           ? vectorStoreRef.current.search(
               (await embedTexts([trimmedQuery]))[0],
-              5
+              retrievalTopK
             )
           : [];
       const topSemanticScore = semanticMatches[0]?.score ?? 0;
-      const metaIntentOverride =
-        vectorStoreRef.current.size() > 0 &&
-        META_QUERY_PATTERN.test(sanitizedInput);
       const route: SemanticRoute =
         metaIntentOverride ||
         (semanticMatches.length > 0 && topSemanticScore >= semanticThreshold)
@@ -456,13 +467,7 @@ export function useDocumentAI({
             : 'Bypassing document index (low semantic match). Engaging general AI mode.';
       const routedMatches =
         route === 'document'
-          ? metaIntentOverride
-            ? buildMetaIntentMatches(
-                vectorStoreRef.current.values(),
-                semanticMatches,
-                5
-              )
-            : semanticMatches.slice(0, 3)
+          ? semanticMatches.slice(0, retrievalTopK)
           : [];
 
       const { redactedMatches, tokenDictionary: chunkTokenDictionary } =
@@ -618,15 +623,61 @@ export function useDocumentAI({
   };
 
   const embedTexts = async (texts: string[]): Promise<Float32Array[]> => {
-    const response = await sendEmbeddingRequest({
-      type: 'embed',
-      requestId: uuidv4(),
-      payload: {
-        texts
-      }
-    });
+    if (texts.length === 0) {
+      return [];
+    }
 
-    return response.embeddings;
+    const allEmbeddings = new Array<Float32Array | null>(texts.length).fill(null);
+    let embeddingDimension = 0;
+
+    for (let startIndex = 0; startIndex < texts.length; startIndex += EMBEDDING_BATCH_SIZE) {
+      const batchEntries = texts
+        .slice(startIndex, startIndex + EMBEDDING_BATCH_SIZE)
+        .map((text, offset) => ({
+          index: startIndex + offset,
+          text
+        }))
+        .filter((entry) => entry.text.trim().length > 0);
+
+      if (batchEntries.length === 0) {
+        continue;
+      }
+
+      const response = await sendEmbeddingRequest({
+        type: 'embed',
+        requestId: uuidv4(),
+        payload: {
+          texts: batchEntries.map((entry) => entry.text)
+        }
+      });
+
+      if (response.embeddings.length !== batchEntries.length) {
+        throw new Error('Embedding worker returned an unexpected batch size.');
+      }
+
+      if (response.dimension > 0) {
+        embeddingDimension = response.dimension;
+      }
+
+      batchEntries.forEach((entry, batchIndex) => {
+        allEmbeddings[entry.index] = response.embeddings[batchIndex];
+      });
+    }
+
+    if (embeddingDimension === 0) {
+      return [];
+    }
+
+    return allEmbeddings.map((embedding, index) => {
+      if (embedding) {
+        return embedding;
+      }
+
+      console.warn(
+        `Embedding batch skipped an empty text at index ${index}. Falling back to a zero vector.`
+      );
+      return new Float32Array(embeddingDimension);
+    });
   };
 
   const redactTexts = async (texts: string[]): Promise<RedactionResult[]> => {
@@ -849,31 +900,6 @@ function combineResults(
       metadata: match.metadata
     };
   });
-}
-
-function buildMetaIntentMatches(
-  items: Array<{
-    id: string;
-    text: string;
-    embedding: Float32Array;
-    metadata?: DocumentChunkMetadata;
-  }>,
-  semanticMatches: VectorSearchResult<DocumentChunkMetadata>[],
-  limit: number
-): VectorSearchResult<DocumentChunkMetadata>[] {
-  const scoreById = new Map(semanticMatches.map((match) => [match.id, match.score]));
-
-  return [...items]
-    .sort(
-      (left, right) =>
-        (left.metadata?.chunkIndex ?? Number.MAX_SAFE_INTEGER) -
-        (right.metadata?.chunkIndex ?? Number.MAX_SAFE_INTEGER)
-    )
-    .slice(0, limit)
-    .map((item) => ({
-      ...item,
-      score: scoreById.get(item.id) ?? 0
-    }));
 }
 
 function normalizeTokenLabel(label: string): string {

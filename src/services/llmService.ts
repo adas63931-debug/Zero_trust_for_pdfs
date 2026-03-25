@@ -1,6 +1,7 @@
 const GROQ_CHAT_COMPLETIONS_URL =
   'https://api.groq.com/openai/v1/chat/completions';
 const DEFAULT_MODEL = 'llama-3.1-8b-instant';
+const MAX_CONTEXT_CHUNKS = 15;
 
 interface GroqChatCompletionResponse {
   choices?: Array<{
@@ -47,7 +48,8 @@ export async function requestSecureCompletion({
   }
 
   const joinedChunks = sanitizedChunks
-    .map((chunk, index) => `Context Chunk ${index + 1}:\n${chunk}`)
+    .slice(0, MAX_CONTEXT_CHUNKS)
+    .map((chunk, index) => `--- CHUNK ${index + 1} ---\n${chunk}`)
     .join('\n\n');
 
   const systemPrompt = useContext

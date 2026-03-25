@@ -134,7 +134,19 @@ export class VectorStore<TMetadata = Record<string, unknown>> {
       sum += value * value;
     }
 
-    return Math.sqrt(sum);
+    if (!Number.isFinite(sum)) {
+      console.warn('Vector math resulted in NaN - check embedding validity.');
+      return 0;
+    }
+
+    const magnitude = Math.sqrt(sum);
+
+    if (!Number.isFinite(magnitude)) {
+      console.warn('Vector math resulted in NaN - check embedding validity.');
+      return 0;
+    }
+
+    return magnitude;
   }
 
   private cosineSimilarity(
@@ -143,7 +155,15 @@ export class VectorStore<TMetadata = Record<string, unknown>> {
     rightVector: Float32Array,
     rightMagnitude: number
   ): number {
-    if (leftMagnitude === 0 || rightMagnitude === 0) {
+    if (
+      leftMagnitude === 0 ||
+      rightMagnitude === 0 ||
+      !Number.isFinite(leftMagnitude) ||
+      !Number.isFinite(rightMagnitude)
+    ) {
+      if (!Number.isFinite(leftMagnitude) || !Number.isFinite(rightMagnitude)) {
+        console.warn('Vector math resulted in NaN - check embedding validity.');
+      }
       return 0;
     }
 
@@ -153,6 +173,18 @@ export class VectorStore<TMetadata = Record<string, unknown>> {
       dotProduct += leftVector[index] * rightVector[index];
     }
 
-    return dotProduct / (leftMagnitude * rightMagnitude);
+    if (!Number.isFinite(dotProduct)) {
+      console.warn('Vector math resulted in NaN - check embedding validity.');
+      return 0;
+    }
+
+    const similarity = dotProduct / (leftMagnitude * rightMagnitude);
+
+    if (!Number.isFinite(similarity)) {
+      console.warn('Vector math resulted in NaN - check embedding validity.');
+      return 0;
+    }
+
+    return similarity;
   }
 }

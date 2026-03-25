@@ -18,8 +18,8 @@ export class Chunker {
   private readonly separators: string[];
 
   constructor(options: ChunkerOptions = {}) {
-    this.chunkSize = options.chunkSize ?? 500;
-    this.chunkOverlap = options.chunkOverlap ?? 50;
+    this.chunkSize = options.chunkSize ?? 1000;
+    this.chunkOverlap = options.chunkOverlap ?? 200;
     this.separators = options.separators ?? DEFAULT_SEPARATORS;
 
     if (this.chunkSize <= 0) {
