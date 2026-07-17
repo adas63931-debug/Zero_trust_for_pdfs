@@ -6,7 +6,7 @@ Designed specifically for complex Retrieval-Augmented Generation (RAG) pipelines
 
 Zero latency penalty. Zero data leakage. 100% Client-Side.
 
-Built by Ravi Shankar Pal | B.Tech ECE, NIT Silchar.
+Built by Ravi Shankar Pal, Akash Das and Team.| B.Tech ECE, NIT Silchar.
 
 ## 🏆 Core Engineering Breakthroughs
 
